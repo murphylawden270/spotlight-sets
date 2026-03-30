@@ -37,13 +37,12 @@ async def bot_message_id(message_id):
     try:
         lappland = create_client(url, key)
         meow = lappland.table("spotlight_set_message_id").select("bot_message_id").eq("user_message_id", message_id)
-        bot_message_id = await asyncio.to_thread(meow.execute)
-        if not bot_message_id.data:
+        id = await asyncio.to_thread(meow.execute)
+        if not id.data:
             return None
-        return bot_message_id.data[0]["bot_message_id"]
+        return id.data[0]["bot_message_id"]
     except Exception as e:
-        print(f'ERROR: {e}')
-        pass
+        print(f'ERROR in bot_message_id: {e}')
 
 async def get_month():
     try:
@@ -54,8 +53,16 @@ async def get_month():
             return None
         return month.data[0]["spotlight_month"]
     except Exception as e:
-        print(f'ERROR: {e}')
-        pass
+        print(f'ERROR in get_month: {e}')
+
+def spotlight_reaction(message, reaction, reaction_id):
+    return any(
+        r.emoji.name == reaction and r.emoji.id == reaction_id
+        for r in message.reactions
+    )
+
+def staff_role(member):
+    return any(role.id == spotlight_staff for role in member.roles)
 
 class Client(commands.Bot):
 
@@ -79,27 +86,23 @@ class Client(commands.Bot):
 
         self.spotlights_set = self.get_channel(spotlights_set_id)
 
-        start_1 = await spotlights.send("*Spotlight Bot Is Online!*")
-        start_2 = await spotlights.send("*Fetching Messages...*")
+        start_1 = await spotlights.send("**Spotlight Bot Is Online!**")
+        start_2 = await spotlights.send("**Fetching Messages...**")
 
         async def yes_callback(interaction):
             await interaction.response.defer() 
-            if not any(role.id == spotlight_staff for role in interaction.user.roles):
-                await interaction.followup.send("You don't have permission.", ephemeral=True)
+            if not staff_role(interaction):
+                await interaction.followup.send("**You don't have permission.**", ephemeral=True)
                 return
             
             lappland = create_client(url, key)
             button.stop()
-            reply_1 = await interaction.followup.send("*Implementing changes...*")
+            reply_1 = await interaction.followup.send("**Implementing changes...**")
             messages = [message async for message in spotlights.history(limit=None)]
             messages.reverse()
 
             for message in messages:
-                reaction_found = any(
-                    r.emoji.name == reaction and r.emoji.id == reaction_id
-                    for r in message.reactions
-                )
-                if not reaction_found:
+                if not spotlight_reaction(message, reaction, reaction_id):
                     continue
 
                 if not re.search(spotlight_message, message.content):
@@ -110,27 +113,27 @@ class Client(commands.Bot):
                 else:
                     select_table = "spotlight_set_message_id"
 
-                existing_message_id = lappland.table(select_table).select("*").eq("user_message_id", message.id)
-                meow = await asyncio.to_thread(existing_message_id.execute)
+                existing_id = lappland.table(select_table).select("*").eq("user_message_id", message.id)
+                meow = await asyncio.to_thread(existing_id.execute)
 
                 if not meow.data:
                     if select_table == "spotlight_set_message_id":
                         content = await spotlights_set.send(message.content)
-                        message_store = lappland.table(select_table).insert({
+                        stored_message = lappland.table(select_table).insert({
                             "user_message_id": message.id,
                             "bot_message_id": content.id,
                             "spotlight_context": message.content
                         })
-                    else: # no need to store old sets in set channel
-                        message_store = lappland.table(select_table).insert({
+                    else:
+                        stored_message = lappland.table(select_table).insert({
                             "user_message_id": message.id,
                             "bot_message_id": content.id,
                             "spotlight_context": message.content
                         })
-                    await asyncio.to_thread(message_store.execute)
+                    await asyncio.to_thread(stored_message.execute)
                     await asyncio.sleep(5)
 
-                elif meow.data:
+                else:
                     try:
                         bot_id = meow.data[0]["bot_message_id"]
                         existing_in_db = meow.data[0]["spotlight_context"]
@@ -138,11 +141,11 @@ class Client(commands.Bot):
                             try:
                                 bot_edit = await spotlights_set.fetch_message(bot_id)
                                 await bot_edit.edit(content=message.content)
-                                message_edit = lappland.table(select_table).update({
+                                edited_message = lappland.table(select_table).update({
                                     "last_edit": datetime.now(timezone.utc).isoformat(),
                                     "spotlight_context": message.content,
                                 }).eq("user_message_id", message.id)
-                                await asyncio.to_thread(message_edit.execute)
+                                await asyncio.to_thread(edited_message.execute)
                             except discord.NotFound:
                                 pass
                             except discord.Forbidden:
@@ -154,10 +157,9 @@ class Client(commands.Bot):
                         await asyncio.sleep(5)
 
             reacted_message_ids = [
-                str(m.id) for m in messages
-                if any(r.emoji.name == reaction and r.emoji.id == reaction_id for r in m.reactions)
-                and re.search(spotlight_message, m.content)
-            ]
+                str(message.id) for message in messages
+                if spotlight_reaction(message, reaction, reaction_id) and re.search(spotlight_message, message.content)
+                ]
 
             meow = lappland.table("spotlight_set_message_id").select("user_message_id")
             existing_user_message_ids = await asyncio.to_thread(meow.execute)
@@ -168,25 +170,27 @@ class Client(commands.Bot):
                             bot_id = await bot_message_id(message_id["user_message_id"])
                             bot_delete = await spotlights_set.fetch_message(bot_id)
                             await bot_delete.delete()
-                            message_delete = lappland.table("spotlight_set_message_id").delete(
+                            deleted_message = lappland.table("spotlight_set_message_id").delete(
                             ).eq("user_message_id", message_id["user_message_id"])
-                            await asyncio.to_thread(message_delete.execute)
+                            await asyncio.to_thread(deleted_message.execute)
                             await asyncio.sleep(5)
                         except discord.NotFound:
                             pass
 
-            reply_2 = await spotlights.send("Changes Implemented!")
-            await spotlights.delete_messages([start_1, start_2, reply_1, start_3, reply_2])
+            reply_2 = await spotlights.send("**Changes Implemented!**")
+            await reply_1.delete()
+            await spotlights.delete_messages([start_1, start_2, start_3])
 
         async def no_callback(interaction):
             await interaction.response.defer()
-            if not any(role.id == spotlight_staff for role in interaction.user.roles):
-                await interaction.followup.send("You don't have permission.", ephemeral=True)
+            if not staff_role(interaction):
+                await interaction.followup.send("**You don't have permission.**", ephemeral=True)
                 return
             button.stop()
-            reply_3 = await interaction.followup.send("Changes will not be implemented.")
-            await asyncio.sleep(1)
-            await spotlights.delete_messages([start_1, start_2, start_3, reply_3])
+            reply_3 = await interaction.followup.send("**Changes will not be implemented.**")
+            await asyncio.sleep(2)
+            await reply_3.delete()
+            await spotlights.delete_messages([start_1, start_2, start_3])
 
         Yes = Button(label="Yes", style=discord.ButtonStyle.green)
         No = Button(label="No", style=discord.ButtonStyle.red)
@@ -215,8 +219,7 @@ class Client(commands.Bot):
         if member is None or member.bot: 
             return
 
-        role = [role.id for role in member.roles]
-        if spotlight_staff not in role:
+        if not staff_role(member):
             return
 
         channel = self.get_channel(payload.channel_id)
@@ -232,19 +235,19 @@ class Client(commands.Bot):
         month = await get_month()
 
         meow = lappland.table("spotlight_set_message_id").select("*").eq("user_message_id", message.id)
-        existing_message_id = await asyncio.to_thread(meow.execute)
-        if existing_message_id.data:
+        existing_id = await asyncio.to_thread(meow.execute)
+        if existing_id.data:
             return
 
         spotlights_set = self.get_channel(spotlights_set_id)
         store = await spotlights_set.send(message.content)
-        message_insert = lappland.table("spotlight_set_message_id").insert({
+        inserted_message = lappland.table("spotlight_set_message_id").insert({
             "user_message_id": message.id,
             "bot_message_id": store.id,
             "spotlight_context": message.content,
             "spotlight_month": month
         })
-        await asyncio.to_thread(message_insert.execute)
+        await asyncio.to_thread(inserted_message.execute)
  
         # this shit breaks the sets and storing in db
         set_blocks = re.findall(spotlight_sets, message.content)
@@ -254,30 +257,32 @@ class Client(commands.Bot):
         else:
             sets = [block.strip() for block in set_blocks]
 
-        sets = ["\n".join(line.strip() for line in s.strip().splitlines()) for s in sets]
+        sets = ["\n".join(line.strip() for line in set.strip().splitlines()) for set in sets]
 
-        fmt = re.findall(set_format, message.content)[0]
+        format = re.findall(set_format, message.content)[0]
 
         suggester_match = re.search(set_suggester, message.content)
         if suggester_match:
-            suggesters = [s.strip() for s in suggester_match.group(1).split(" and ")]
+            suggesters = [suggester.strip() for suggester in suggester_match.group(1).split(" and ")]
         else:
             suggesters = ["NA"]
 
         if len(suggesters) == len(sets):
             pairs = list(zip(sets, suggesters))
         elif len(suggesters) == 1:
-            pairs = [(s, suggesters[0]) for s in sets]
+            pairs = [(set, suggesters[0]) for set in sets]
+        else:
+            pairs = [(set, "NA") for set in sets]
 
-        for set_text, suggester in pairs:
-            insert = lappland.table("spotlight_set").insert({
+        for set, suggester in pairs:
+            insert_set = lappland.table("spotlight_set").insert({
                 "user_message_id": message.id,
-                "format": fmt,
-                "set": set_text,
+                "format": format,
+                "set": set,
                 "suggested_by": suggester,
                 "spotlight_month": month
             })
-            await asyncio.to_thread(insert.execute)
+            await asyncio.to_thread(insert_set.execute)
 
     async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent):
             if payload.guild_id is None or payload.guild_id != socmed_server or payload.channel_id != spotlights_id:
@@ -299,7 +304,6 @@ class Client(commands.Bot):
             if not re.search(spotlight_message, after.content): 
                 return
             
-    
             spotlights_set = self.get_channel(spotlights_set_id)
             bot_id = await bot_message_id(payload.message_id)
             
@@ -311,11 +315,11 @@ class Client(commands.Bot):
             lappland = create_client(url, key)
             month = await get_month()
             await bot_edit.edit(content=after.content)
-            message_content_update =  lappland.table("spotlight_set_message_id").update({
+            message_update =  lappland.table("spotlight_set_message_id").update({
                 "last_edit" : datetime.now(timezone.utc).isoformat(),
                 "spotlight_context": after.content,
             }).eq("user_message_id", payload.message_id)
-            await asyncio.to_thread(message_content_update.execute)
+            await asyncio.to_thread(message_update.execute)
 
             delete_old_set = lappland.table("spotlight_set").delete(
             ).eq("user_message_id", payload.message_id)
@@ -326,28 +330,29 @@ class Client(commands.Bot):
 
             format = re.findall(set_format, after.content)[0]
 
-            suggester = re.search(set_suggester, after.content)
-            if suggester:
-                suggesters = [s.strip() for s in suggester.group(1).split(" and ")]
-            
+            suggester_match = re.search(set_suggester, after.content)
+            if suggester_match:
+                suggesters = [suggester.strip() for suggester in suggester_match.group(1).split(" and ")]
             else:
                 suggesters = ["NA"]
 
             if len(suggesters) == len(sets):
                 pairs = list(zip(sets, suggesters))  # zip is used to merge 2 lists and make it a set 
-
             elif len(suggesters) == 1:
                 pairs = [(set, suggesters[0]) for set in sets]
+            else:
+                pairs = [(set, "NA") for set in sets]
+
 
             for set, suggester in pairs:
-                set_insert = lappland.table("spotlight_set").insert({
+                insert_set = lappland.table("spotlight_set").insert({
                 "user_message_id": payload.message_id,
                 "format": format,
                 "set": set,
                 "suggested_by": suggester,
                 "spotlight_month": month
                 })
-                await asyncio.to_thread(set_insert.execute)
+                await asyncio.to_thread(insert_set.execute)
             
     async def on_raw_message_delete(self, payload: discord.RawMessageUpdateEvent):
         if payload.guild_id is None or payload.guild_id != socmed_server or payload.channel_id != spotlights_id:
@@ -355,23 +360,17 @@ class Client(commands.Bot):
         
         if payload.cached_message and payload.cached_message.author == self.user:
             return  
-          
-        server = self.get_guild(payload.guild_id)
-        member = server.get_member(payload.user_id)
-
-        if member is None or member.bot: 
-            return
-
-        role = [role.id for role in member.roles]
-        if spotlight_staff not in role:
-            return
         
         spotlights_set = self.get_channel(spotlights_set_id)
         bot_id = await bot_message_id(payload.message_id)
         if bot_id is None:
             return
 
-        bot_delete = await spotlights_set.fetch_message(bot_id)
+        try:
+            bot_delete = await spotlights_set.fetch_message(bot_id)
+        except discord.NotFound:
+            return
+                    
         channel = self.get_channel(spotlights_id)
 
         Yes = Button(label="Yes", style=discord.ButtonStyle.green)
@@ -379,28 +378,35 @@ class Client(commands.Bot):
 
         async def yes_callback(interaction):
             await interaction.response.defer()
-            if not any(role.id == spotlight_staff for role in interaction.user.roles):
-                await interaction.followup.send("You don't have permission.", ephemeral=True)
-                return            
-            button.stop()
-            lappland = create_client(url, key)
-            await bot_delete.delete()
-            reply = await interaction.followup.send("Message Deleted!")
-            delete_message = lappland.table("spotlight_set_message_id").delete(
-            ).eq("user_message_id", payload.message_id)
-            await asyncio.to_thread(delete_message.execute)
-            await asyncio.sleep(1)
-            await channel.delete_messages([prompt, reply])
+            if not staff_role(interaction.user):
+                await interaction.followup.send("**You don't have permission.**", ephemeral=True)
+                return
+            
+            try:
+                lappland = create_client(url, key)
+                message_id = lappland.table("spotlight_set_message_id").select("user_message_id").eq("bot_message_id", bot_id)
+                meow = await asyncio.to_thread(message_id.execute)
+                if meow.data:
+                    user_msg_id = meow.data[0]["user_message_id"]
+                    deleted_message = lappland.table("spotlight_set_message_id").delete().eq("user_message_id", user_msg_id)
+                    await asyncio.to_thread(deleted_message.execute)
+                
+                await bot_delete.delete()
+                reply = await interaction.followup.send("**Message Deleted!**")
+                await asyncio.sleep(2)
+                await reply.delete()
+            except Exception:
+                pass
 
         async def no_callback(interaction):
             await interaction.response.defer()
-            if not any(role.id == spotlight_staff for role in interaction.user.roles):
-                await interaction.followup.send("You don't have permission.", ephemeral=True)
-                return            
+            if not staff_role(interaction.user):
+                await interaction.followup.send("**You don't have permission.**", ephemeral=True)
+                return
             button.stop()
             reply = await interaction.followup.send("*Message will not be deleted.*")
-            await asyncio.sleep(1)
-            await channel.delete_messages([prompt, reply])
+            await asyncio.sleep(2)
+            await reply.delete()
 
         Yes.callback = yes_callback
         No.callback = no_callback
@@ -408,7 +414,7 @@ class Client(commands.Bot):
         button = View()
         button.add_item(Yes)
         button.add_item(No)
-        prompt = await channel.send("*Do you wish to delete this message?*",view=button)
+        prompt = await channel.send("**Do you wish to delete this message?**",view=button)
             
 intents = discord.Intents.default()
 intents.message_content = True
@@ -441,21 +447,21 @@ bot = Client(command_prefix="/", intents=intents)
 ])
 async def start_set_collection(interaction: discord.Interaction, month: app_commands.Choice[str], year: app_commands.Choice[str]):
     await interaction.response.defer()
-    if not any(role.id == spotlight_staff for role in interaction.user.roles):
-        await interaction.followup.send("You don't have permission.", ephemeral=True)
+    if not staff_role(interaction):
+        await interaction.followup.send("**You don't have permission.**", ephemeral=True)
         return
     lappland = create_client(url, key)
     channel = bot.get_channel(spotlights_id)
     meow = lappland.table("spotlight_month").select("*").eq("spotlight_month", f"{month.value} {year.value}")
     month_exists = await asyncio.to_thread(meow.execute)
     if month_exists.data:
-        reply1 = await interaction.followup.send(f"*Sets have already been collected for {month.value} {year.value}!*")
+        reply1 = await interaction.followup.send(f"**Sets have already been collected for {month.value} {year.value}!**")
         await channel.delete_messages([reply1])
         return
 
     spotlights_set = bot.get_channel(spotlights_set_id)
     await spotlights_set.send(f"# =================== {month.value} {year.value} Spotlight Sets ===================")
-    reply2 = await interaction.followup.send(f"*Set collection started for {month.value} {year.value}!*")
+    reply2 = await interaction.followup.send(f"**Set collection started for {month.value} {year.value}!**")
     month_end = lappland.table("spotlight_month").update({
         "active": False
     }).eq("active", True)
@@ -470,6 +476,7 @@ async def start_set_collection(interaction: discord.Interaction, month: app_comm
     await channel.delete_messages([reply2])
 
 texas = create_client(url, key) # need this to be global, since we only have 3 seconds to get the database from db (discord.py limitation)
+
 async def month_autocomplete(interaction: discord.Interaction, current: str):
     meow = texas.table("spotlight_month").select("spotlight_month").eq("active", True)
     all_month = await asyncio.to_thread(meow.execute)
@@ -498,11 +505,11 @@ async def formats_autocomplete(interaction: discord.Interaction, current: str):
 @app_commands.autocomplete(month=month_autocomplete, formats=formats_autocomplete)
 async def generate_smogon_post(interaction: discord.Interaction, month: str, formats: str,):
     await interaction.response.defer()
-    if not any(role.id == spotlight_staff for role in interaction.user.roles):
-        await interaction.followup.send("You don't have permission.", ephemeral=True)
+    if not staff_role(interaction):
+        await interaction.followup.send("**You don't have permission.**", ephemeral=True)
         return
 
-    format_list = [f.strip() for f in formats.split(",")]
+    format_list = [format.strip() for format in formats.split(",")]
     all_output = []
     lappland = create_client(url, key)
 
@@ -510,11 +517,14 @@ async def generate_smogon_post(interaction: discord.Interaction, month: str, for
         meow = lappland.table("spotlight_set").select("set, suggested_by").eq("format", format).eq("spotlight_month", month)  
         all_format = await asyncio.to_thread(meow.execute)
 
+        if not all_format.data:
+            continue
+
         all_suggesters = [row["suggested_by"] for row in all_format.data]
         unique_suggesters = list(dict.fromkeys(all_suggesters))
         suggester_str = " and ".join(f"@{s}" for s in unique_suggesters)
 
-        smogon = f"[B]{format}[/B], courtesy of {suggester_str}"
+        smogon = [f"[B]{format}[/B], courtesy of {suggester_str}"]
 
         for row in all_format.data:
             pokemon_set = row["set"].strip()
@@ -525,7 +535,7 @@ async def generate_smogon_post(interaction: discord.Interaction, month: str, for
 
             name = name_match.group(1).strip()
 
-            # for spoiler tag
+            # for spoiler tag, extracts everything after ":" 
             replay_match = re.search(r"Replay:\s*(.+)", pokemon_set, re.DOTALL)
             qc_match = re.search(r"QC Notes:\s*(.+)", pokemon_set, re.DOTALL)
 
@@ -544,6 +554,10 @@ async def generate_smogon_post(interaction: discord.Interaction, month: str, for
             smogon = smogon + f"\n:{name}:\n{pokemon_set}\n{spoiler}"
                 
         all_output.append(smogon)
+
+    if not all_output:
+        await interaction.followup.send("**No sets found for these formats!**")
+        return
         
     output = "\n\n".join(all_output)
     bbcode = discord.File(io.BytesIO(output.encode()), filename="spotlight_post.txt")
