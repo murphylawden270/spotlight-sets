@@ -41,12 +41,12 @@ reaction = os.getenv("reaction")
 reaction_id = int(os.getenv("reaction_id"))
 
 # regx pattern for different parts of spotlight message
-spotlight_message = "^.+ by .+\n?```[\s\S]+```$"
-spotlight_sets = "```([\s\S]+?)```"
-individual_set = "\n\s*\n"
-set_format = "(^.+) by"
-set_suggester = "by (.+)\n?```"
-pokemon = "^(.+?)\s*@"
+spotlight_message = r"^.+ by .+\n?```[\s\S]+```$"
+spotlight_sets = r"```([\s\S]+?)```"
+individual_set = r"\n\s*\n"
+set_format = r"(^.+) by"
+set_suggester = r"by (.+)\n?```"
+pokemon = r"^(.+?)\s*@"
 
 # bot message id for raw_reaction, raw_edit, raw_delete
 
