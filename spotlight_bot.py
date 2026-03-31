@@ -25,6 +25,16 @@ spotlight_staff = int(os.getenv("spotlight_staff"))
 reaction = os.getenv("reaction")
 reaction_id = int(os.getenv("reaction_id"))
 PORT = int(os.getenv("PORT", 8080))
+print("test:")
+print("token:", bool(os.getenv("token")))
+print("url:", bool(os.getenv("url")))
+print("key:", bool(os.getenv("key")))
+print("socmed_server:", os.getenv("socmed_server"))
+print("spotlights_id:", os.getenv("spotlights_id"))
+print("spotlights_set_id:", os.getenv("spotlights_set_id"))
+print("spotlight_staff:", os.getenv("spotlight_staff"))
+print("reaction:", os.getenv("reaction"))
+print("reaction_id:", os.getenv("reaction_id"))
 
 # regx pattern for different parts of spotlight message
 spotlight_message = r"^.+ by .+\n?```[\s\S]+```$"
