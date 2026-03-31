@@ -534,12 +534,12 @@ async def start_set_collection(interaction: discord.Interaction, month: app_comm
     await asyncio.sleep(10)
     await channel.delete_messages([reply2])
 
-@bot.tree.command(name="generate_spotlight_post", description="start collecting sets for the month", guild=discord.Object(id=socmed_server))
-@app_commands.describe(month = "month of the post")
-@app_commands.describe(month = "comma-separated formats e.g. BSS, NatDex Ubers")
-async def generate_spotlight_post(interaction: discord.Interaction, month: str, format: str):
+@bot.tree.command(name="generate_spotlight_post", description="create spotlight smogon post", guild=discord.Object(id=socmed_server))
+@app_commands.describe(month-year = "month and year of the post e.g. January 2026")
+@app_commands.describe(format = "comma-separated formats e.g. BSS, NatDex Ubers")
+async def generate_spotlight_post(interaction: discord.Interaction, month-year: str, format: str):
     await interaction.response.defer()
-    await log("generate_spotlight_post", f"{month.value} {format.value}")
+    await log("generate_spotlight_post", f"{month-year.value} {format.value}")
 
     guild = interaction.guild
     member = guild.get_member(interaction.user.id)
@@ -560,10 +560,10 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
     lappland = create_client(url, key)
     existing_month = lappland.table("spotlight_set")\
                 .select("*")\
-                .eq("spotlight_month", month)\
+                .eq("spotlight_month", month-year)\
                 .execute()
     if not existing_month.data:
-        reply1 = await interaction.followup.send(f"No entry exists for {month}!")
+        reply1 = await interaction.followup.send(f"No entry exists for {month-year}!")
         await asyncio.sleep(1)
         await interaction.delete_messages([reply1])
         return
@@ -574,10 +574,10 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
                 existing_format = lappland.table("spotlight_set")\
                         .select("*")\
                         .eq("format", i)\
-                        .eq("spotlight_month", month)\
+                        .eq("spotlight_month", month-year)\
                         .execute()
                 if not existing_format.data:
-                        reply2 = await interaction.followup.send(f"Sets for {i} doesn't exist for {month}!")
+                        reply2 = await interaction.followup.send(f"Sets for {i} doesn't exist for {month-year}!")
                         await asyncio.sleep(1)
                         await interaction.delete_messages([reply2])
                         return
@@ -590,7 +590,7 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
                 existing = lappland.table("spotlight_set")\
                         .select("suggested_by")\
                         .eq("format", i)\
-                        .eq("spotlight_month", month)\
+                        .eq("spotlight_month", month-year)\
                         .execute()
                 result[i] = list(set(j["suggested_by"] for j in existing.data))
 
@@ -600,7 +600,7 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
                 sets = lappland.table("spotlight_set")\
                         .select("set","pokemon","qc_notes","replay")\
                         .eq("format", key)\
-                        .eq("spotlight_month", month)\
+                        .eq("spotlight_month", month-year)\
                         .execute()
                 for j in sets.data:
                         if j["qc_notes"]:
