@@ -9,25 +9,8 @@ import io
 from dotenv import load_dotenv
 import os
 from datetime import datetime, timezone
-from flask import Flask
-from threading import Thread
 
 # Self note: discord.py works with aync functions but create_client is sync. acreate_client gives network, so didn't wanna risk it. So call using create_client, then force it to async by wrapping it with asyncio.to_thread.
-
-# Render's only free tier is Web Server that requires an HTTP server to keep the app alive. Flask runs a simple web server on port 8080 in a separate thread, so Render doesn't shut down the bot.
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run():
-    from waitress import serve
-    serve(app, host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
 
 # source: https://youtu.be/sOwG0bw0RNU?si=0Ty_koXKlg21pSSk
 load_dotenv()
@@ -639,5 +622,4 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
         await asyncio.sleep(900)
         await interaction.delete_messages([reply3])
 
-keep_alive()
 bot.run(token)
