@@ -9,6 +9,7 @@ import io
 from dotenv import load_dotenv
 import os
 from datetime import datetime, timezone
+from aiohttp import web
 
 # Self note: discord.py works with aync functions but create_client is sync. acreate_client gives network, so didn't wanna risk it. So call using create_client, then force it to async by wrapping it with asyncio.to_thread.
 
@@ -24,6 +25,8 @@ spotlight_staff = int(os.getenv("spotlight_staff"))
 reaction = os.getenv("reaction")
 reaction_id = int(os.getenv("reaction_id"))
 
+PORT = int(os.getenv("PORT", 8080))
+
 # regx pattern for different parts of spotlight message
 spotlight_message = r"^.+ by .+\n?```[\s\S]+```$"
 spotlight_sets = r"```([\s\S]+?)```"
@@ -33,6 +36,37 @@ set_format = r"by (.+)\n?```"
 pokemon = r"^(.+?)\s*@"
 qc_pattern = r'(?i)\bqc\b[^:]*:(.*)'
 replay_pattern = r'(?i)\breplay\b[^:]*:(.*)'
+
+async def handle_root(request):
+    return web.Response(text="OK")
+
+async def handle_keep_alive(request):
+    return web.Response(text="OK")
+
+def setup_routes(app):
+    pass
+
+@web.middleware
+async def error_middleware(request, handler):
+    try:
+        return await handler(request)
+    except web.HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+async def start_web_server():
+    app = web.Application(middlewares=[error_middleware])
+    app.router.add_get('/', handle_root)
+    app.router.add_get('/keep-alive', handle_keep_alive)
+    setup_routes(app)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    print(f"Web server started on port {PORT}")
 
 # bot message id for raw_reaction, raw_edit, raw_delete
 
@@ -82,6 +116,72 @@ def spotlight_reaction(message, reaction, reaction_id):
 def staff_role(member):
     return any(role.id == spotlight_staff for role in member.roles)
 
+async def store_set(message, month):
+    try:
+        lappland = create_client(url, key)
+        blocks = re.findall(spotlight_sets, message.content)
+
+        if len(blocks) == 1:
+            sets = re.split(individual_set, blocks[0].strip())
+        else:
+            sets = [i.strip() for i in blocks]
+
+        qcs = []
+        replays = []
+        sets2 = []
+        for i in sets:
+            if re.search(qc_pattern, i):
+                qc = re.findall(qc_pattern, i)
+                qcs.extend(qc)
+                remove = re.sub(qc_pattern, '', i)
+                sets2.append(remove)
+            elif re.search(replay_pattern, i):
+                replay = re.findall(replay_pattern, i)
+                replays.extend(replay)
+                remove = re.sub(replay_pattern, '', i)
+                sets2.append(remove)
+            else:
+                sets2.append(i)
+                replays.append(None)
+                qcs.append(None)
+
+        sets2 = ["\n".join(j.strip() for j in set.strip().splitlines()) for set in sets2]
+
+        format = re.findall(set_format, message.content)[0]
+
+        suggester = re.search(set_suggester, message.content)
+        if suggester:
+            suggesters = [i.strip() for i in suggester.group(1).split(" and ")]
+        else:
+            suggesters = ["NA"]
+
+        pokemons = []
+        for i in sets2:
+            mon = re.findall(pokemon, i)
+            pokemons.extend(mon)
+
+        if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
+            pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
+        elif len(suggesters) == 1:
+            pairs = [(mon, set, suggesters[0], qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
+        else:
+            pairs = [(mon, set, "NA", qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
+
+        for mon, set, suggester, qc, replay in pairs:
+            insert_set = lappland.table("spotlight_set").insert({
+                "user_message_id": message.id,
+                "format": format,
+                "pokemon": mon,
+                "set": set,
+                "qc_notes": qc,
+                "replay": replay,
+                "suggested_by": suggester,
+                "spotlight_month": month
+            })
+            await asyncio.to_thread(insert_set.execute)
+    except Exception as e:
+        await log("fucked_up", error=str(e))
+
 class Client(commands.Bot):
 
     async def on_ready(self):
@@ -125,62 +225,69 @@ class Client(commands.Bot):
             reply_1 = await interaction.followup.send("**Implementing changes...**")
             messages = [message async for message in spotlights.history(limit=None)]
             messages.reverse()
-
+            month = await get_month()
             for message in messages:
-                if not spotlight_reaction(message, reaction, reaction_id):
-                    continue
+                try:
+                    if not spotlight_reaction(message, reaction, reaction_id):
+                        continue
 
-                if not re.search(spotlight_message, message.content):
-                    continue
+                    if not re.search(spotlight_message, message.content):
+                        continue
 
-                if message.created_at < sent_date:
-                    select_table = "old_spotlight_set_message_id"
-                else:
-                    select_table = "spotlight_set_message_id"
-
-                existing_id = lappland.table(select_table).select("*").eq("user_message_id", message.id)
-                meow = await asyncio.to_thread(existing_id.execute)
-
-                if not meow.data:
-                    if select_table == "spotlight_set_message_id":
-                        content = await spotlights_set.send(message.content)
-                        stored_message = lappland.table(select_table).insert({
-                            "user_message_id": message.id,
-                            "bot_message_id": content.id,
-                            "spotlight_context": message.content
-                        })
+                    if message.created_at < sent_date:
+                        select_table = "old_spotlight_set_message_id"
                     else:
-                        stored_message = lappland.table(select_table).insert({
-                            "user_message_id": message.id,
-                            "bot_message_id": content.id,
-                            "spotlight_context": message.content
-                        })
-                    await asyncio.to_thread(stored_message.execute)
-                    await asyncio.sleep(5)
+                        select_table = "spotlight_set_message_id"
 
-                else:
-                    try:
-                        bot_id = meow.data[0]["bot_message_id"]
-                        existing_in_db = meow.data[0]["spotlight_context"]
-                        if existing_in_db != message.content:
-                            try:
-                                bot_edit = await spotlights_set.fetch_message(bot_id)
-                                await bot_edit.edit(content=message.content)
-                                edited_message = lappland.table(select_table).update({
-                                    "last_edit": datetime.now(timezone.utc).isoformat(),
-                                    "spotlight_context": message.content,
-                                }).eq("user_message_id", message.id)
-                                await asyncio.to_thread(edited_message.execute)
-                            except discord.NotFound as e:
-                                    await log("fucked_up", error=str(e))
-                                    return
-                            except discord.Forbidden as e:
-                                await log("fucked_up", error=str(e)) 
+                    existing_id = lappland.table(select_table).select("*").eq("user_message_id", message.id)
+                    meow = await asyncio.to_thread(existing_id.execute)
+
+                    if not meow.data:
+                        if select_table == "spotlight_set_message_id":
+                            content = await spotlights_set.send(message.content)
+                            stored_message = lappland.table(select_table).insert({
+                                "user_message_id": message.id,
+                                "bot_message_id": content.id,
+                                "spotlight_context": message.content
+                            })
                         else:
-                            await asyncio.sleep(5)
-                    except discord.NotFound as e:
-                        await log("fucked_up", error=str(e)) 
+                            stored_message = lappland.table(select_table).insert({
+                                "user_message_id": message.id,
+                                "spotlight_context": message.content
+                            })
+                        await asyncio.to_thread(stored_message.execute)
+                        await store_set(message, month)
                         await asyncio.sleep(5)
+
+                    else:
+                        try:
+                            bot_id = meow.data[0].get("bot_message_id")
+                            if bot_id is None:
+                                continue
+                            existing_in_db = meow.data[0]["spotlight_context"]
+                            if existing_in_db != message.content:
+                                try:
+                                    bot_edit = await spotlights_set.fetch_message(bot_id)
+                                    await bot_edit.edit(content=message.content)
+                                    edited_message = lappland.table(select_table).update({
+                                        "last_edit": datetime.now(timezone.utc).isoformat(),
+                                        "spotlight_context": message.content,
+                                    }).eq("user_message_id", message.id)
+                                    await asyncio.to_thread(edited_message.execute)
+                                    await store_set(message, month)
+                                except discord.NotFound as e:
+                                        await log("fucked_up", error=str(e))
+                                        return
+                                except discord.Forbidden as e:
+                                    await log("fucked_up", error=str(e)) 
+                            else:
+                                await asyncio.sleep(5)
+                        except discord.NotFound as e:
+                            await log("fucked_up", error=str(e)) 
+                            await asyncio.sleep(5)
+                except Exception as e:
+                    await log("fucked_up", error=str(e))
+                    continue
 
             reacted_message_ids = [
                 str(message.id) for message in messages
@@ -288,67 +395,8 @@ class Client(commands.Bot):
         })
         await asyncio.to_thread(inserted_message.execute)
  
-        # this shit breaks the sets and storing in db
-        blocks = re.findall(spotlight_sets, message.content)
+        await store_set(message, month)
 
-        if len(blocks) == 1:
-            sets = re.split(individual_set, blocks[0].strip())
-        else:
-            sets = [i.strip() for i in blocks]
-
-        qcs = []
-        replays = []
-        sets2 = []
-        for i in sets:
-            if re.search(qc_pattern, i):
-                qc = re.findall(qc_pattern, i)
-                qcs.extend(qc)
-                remove = re.sub(qc_pattern, '', i)
-                sets2.append(remove)
-            elif re.search(replay_pattern, i):
-                replay = re.findall(replay_pattern, i)
-                replays.extend(replay)
-                remove = re.sub(replay_pattern, '', i)
-                sets2.append(remove)
-            else:
-                sets2.append(i)
-                replays.append(None)
-                qcs.append(None)
-
-        sets2 = ["\n".join(j.strip() for j in set.strip().splitlines()) for set in sets2]
-
-        format = re.findall(set_format, message.content)[0]
-
-        suggester = re.search(set_suggester, message.content)
-        if suggester:
-            suggesters = [i.strip() for i in suggester.group(1).split(" and ")]
-        else:
-            suggesters = ["NA"]
-
-        pokemons = []
-        for i in sets2:
-            mon = re.findall(pokemon, i)
-            pokemons.extend(mon)
-
-        if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
-            pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
-        elif len(suggesters) == 1:
-            pairs = [(mon, set, suggesters[0], qc, replay) for set, mon, qc, replay in zip(pokemons, sets2, qcs, replays)]
-        else:
-            pairs = [(mon, set, "NA", qc, replay) for set, mon, qc, replay in zip(pokemons, sets2, qcs, replays)]
-
-        for mon, set, suggester, qc, replay in pairs:
-            insert_set = lappland.table("spotlight_set").insert({
-                "user_message_id": message.id,
-                "format": format,
-                "pokemon": mon,
-                "set": set,
-                "qc_notes": qc,
-                "replay": replay,
-                "suggested_by": suggester,
-                "spotlight_month": month
-            })
-            await asyncio.to_thread(insert_set.execute)
 
     async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent):
             if payload.guild_id is None or payload.guild_id != socmed_server or payload.channel_id != spotlights_id:
@@ -438,9 +486,9 @@ class Client(commands.Bot):
             if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
                 pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
             elif len(suggesters) == 1:
-                pairs = [(mon, set, suggesters[0], qc, replay) for set, mon, qc, replay in zip(pokemons, sets2, qcs, replays)]
+                pairs = [(mon, set, suggesters[0], qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
             else:
-                pairs = [(mon, set, "NA", qc, replay) for set, mon, qc, replay in zip(pokemons, sets2, qcs, replays)]
+                pairs = [(mon, set, "NA", qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
 
             for mon, set, suggester, qc, replay in pairs:
                 insert_set = lappland.table("spotlight_set").insert({
@@ -600,7 +648,7 @@ async def start_set_collection(interaction: discord.Interaction, month: app_comm
 @app_commands.describe(month = "comma-separated formats e.g. BSS, NatDex Ubers")
 async def generate_spotlight_post(interaction: discord.Interaction, month: str, format: str):
     await interaction.response.defer()
-    await log("generate_spotlight_post", f"{month.value} {format.value}")
+    await log("generate_spotlight_post", f"{month} {format}")
 
     guild = interaction.guild
     member = guild.get_member(interaction.user.id)
@@ -683,4 +731,10 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
         await asyncio.sleep(900)
         await interaction.delete_messages([reply3])
 
-bot.run(token)
+async def main():
+    await asyncio.gather(
+        start_web_server(),
+        bot.start(token)
+    )
+
+asyncio.run(main())
