@@ -743,6 +743,7 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
         await interaction.followup.send("**Something went wrong!**", ephemeral=True)
 
 async def main():
+    print("Starting...")
     await asyncio.gather(
         start_web_server(),
         bot.start(token)
