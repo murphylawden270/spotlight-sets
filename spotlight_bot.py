@@ -28,9 +28,11 @@ reaction_id = int(os.getenv("reaction_id"))
 spotlight_message = r"^.+ by .+\n?```[\s\S]+```$"
 spotlight_sets = r"```([\s\S]+?)```"
 individual_set = r"\n\s*\n"
-set_format = r"(^.+) by"
-set_suggester = r"by (.+)\n?```"
+set_suggester = r"(^.+) by"
+set_format = r"by (.+)\n?```"
 pokemon = r"^(.+?)\s*@"
+qc_pattern = r'(?i)\bqc\b[^:]*:(.*)'
+replay_pattern = r'(?i)\breplay\b[^:]*:(.*)'
 
 # bot message id for raw_reaction, raw_edit, raw_delete
 
@@ -287,35 +289,62 @@ class Client(commands.Bot):
         await asyncio.to_thread(inserted_message.execute)
  
         # this shit breaks the sets and storing in db
-        set_blocks = re.findall(spotlight_sets, message.content)
+        blocks = re.findall(spotlight_sets, message.content)
 
-        if len(set_blocks) == 1:
-            sets = re.split(individual_set, set_blocks[0].strip())
+        if len(blocks) == 1:
+            sets = re.split(individual_set, blocks[0].strip())
         else:
-            sets = [block.strip() for block in set_blocks]
+            sets = [i.strip() for i in blocks]
 
-        sets = ["\n".join(line.strip() for line in set.strip().splitlines()) for set in sets]
+        qcs = []
+        replays = []
+        sets2 = []
+        for i in sets:
+            if re.search(qc_pattern, i):
+                qc = re.findall(qc_pattern, i)
+                qcs.extend(qc)
+                remove = re.sub(qc_pattern, '', i)
+                sets2.append(remove)
+            elif re.search(replay_pattern, i):
+                replay = re.findall(replay_pattern, i)
+                replays.extend(replay)
+                remove = re.sub(replay_pattern, '', i)
+                sets2.append(remove)
+            else:
+                sets2.append(i)
+                replays.append(None)
+                qcs.append(None)
+
+        sets2 = ["\n".join(j.strip() for j in set.strip().splitlines()) for set in sets2]
 
         format = re.findall(set_format, message.content)[0]
 
-        suggester_match = re.search(set_suggester, message.content)
-        if suggester_match:
-            suggesters = [suggester.strip() for suggester in suggester_match.group(1).split(" and ")]
+        suggester = re.search(set_suggester, message.content)
+        if suggester:
+            suggesters = [i.strip() for i in suggester.group(1).split(" and ")]
         else:
             suggesters = ["NA"]
 
-        if len(suggesters) == len(sets):
-            pairs = list(zip(sets, suggesters))
-        elif len(suggesters) == 1:
-            pairs = [(set, suggesters[0]) for set in sets]
-        else:
-            pairs = [(set, "NA") for set in sets]
+        pokemons = []
+        for i in sets2:
+            mon = re.findall(pokemon, i)
+            pokemons.extend(mon)
 
-        for set, suggester in pairs:
+        if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
+            pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
+        elif len(suggesters) == 1:
+            pairs = [(mon, set, suggesters[0], qc, replay) for set, mon, qc, replay in zip(pokemons, sets2, qcs, replays)]
+        else:
+            pairs = [(mon, set, "NA", qc, replay) for set, mon, qc, replay in zip(pokemons, sets2, qcs, replays)]
+
+        for mon, set, suggester, qc, replay in pairs:
             insert_set = lappland.table("spotlight_set").insert({
                 "user_message_id": message.id,
                 "format": format,
+                "pokemon": mon,
                 "set": set,
+                "qc_notes": qc,
+                "replay": replay,
                 "suggested_by": suggester,
                 "spotlight_month": month
             })
@@ -364,33 +393,65 @@ class Client(commands.Bot):
             delete_old_set = lappland.table("spotlight_set").delete(
             ).eq("user_message_id", payload.message_id)
             await asyncio.to_thread(delete_old_set.execute)
-            
-            set = re.findall(spotlight_sets, after.content)[0]
-            sets = re.split(individual_set, set)
+
+            blocks = re.findall(spotlight_sets, after.content)
+
+            if len(blocks) == 1:
+                sets = re.split(individual_set, blocks[0].strip())
+            else:
+                sets = [i.strip() for i in blocks]
+
+            qcs = []
+            replays = []
+            sets2 = []
+            for i in sets:
+                if re.search(qc_pattern, i):
+                    qc = re.findall(qc_pattern, i)
+                    qcs.extend(qc)
+                    remove = re.sub(qc_pattern, '', i)
+                    sets2.append(remove)
+                elif re.search(replay_pattern, i):
+                    replay = re.findall(replay_pattern, i)
+                    replays.extend(replay)
+                    remove = re.sub(replay_pattern, '', i)
+                    sets2.append(remove)
+                else:
+                    sets2.append(i)
+                    replays.append(None)
+                    qcs.append(None)
+
+            sets2 = ["\n".join(j.strip() for j in set.strip().splitlines()) for set in sets2]
 
             format = re.findall(set_format, after.content)[0]
 
-            suggester_match = re.search(set_suggester, after.content)
-            if suggester_match:
-                suggesters = [suggester.strip() for suggester in suggester_match.group(1).split(" and ")]
+            suggester = re.search(set_suggester, after.content)
+            if suggester:
+                suggesters = [i.strip() for i in suggester.group(1).split(" and ")]
             else:
                 suggesters = ["NA"]
 
-            if len(suggesters) == len(sets):
-                pairs = list(zip(sets, suggesters))  # zip is used to merge 2 lists and make it a set 
+            pokemons = []
+            for i in sets2:
+                mon = re.findall(pokemon, i)
+                pokemons.extend(mon)
+
+            if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
+                pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
             elif len(suggesters) == 1:
-                pairs = [(set, suggesters[0]) for set in sets]
+                pairs = [(mon, set, suggesters[0], qc, replay) for set, mon, qc, replay in zip(pokemons, sets2, qcs, replays)]
             else:
-                pairs = [(set, "NA") for set in sets]
+                pairs = [(mon, set, "NA", qc, replay) for set, mon, qc, replay in zip(pokemons, sets2, qcs, replays)]
 
-
-            for set, suggester in pairs:
+            for mon, set, suggester, qc, replay in pairs:
                 insert_set = lappland.table("spotlight_set").insert({
-                "user_message_id": payload.message_id,
-                "format": format,
-                "set": set,
-                "suggested_by": suggester,
-                "spotlight_month": month
+                    "user_message_id": payload.message_id,
+                    "format": format,
+                    "pokemon": mon,
+                    "set": set,
+                    "qc_notes": qc,
+                    "replay": replay,
+                    "suggested_by": suggester,
+                    "spotlight_month": month
                 })
                 await asyncio.to_thread(insert_set.execute)
             
@@ -534,12 +595,12 @@ async def start_set_collection(interaction: discord.Interaction, month: app_comm
     await asyncio.sleep(10)
     await channel.delete_messages([reply2])
 
-@bot.tree.command(name="generate_spotlight_post", description="create spotlight smogon post", guild=discord.Object(id=socmed_server))
-@app_commands.describe(month-year = "month and year of the post e.g. January 2026")
-@app_commands.describe(format = "comma-separated formats e.g. BSS, NatDex Ubers")
-async def generate_spotlight_post(interaction: discord.Interaction, month-year: str, format: str):
+@bot.tree.command(name="generate_spotlight_post", description="start collecting sets for the month", guild=discord.Object(id=socmed_server))
+@app_commands.describe(month = "month of the post")
+@app_commands.describe(month = "comma-separated formats e.g. BSS, NatDex Ubers")
+async def generate_spotlight_post(interaction: discord.Interaction, month: str, format: str):
     await interaction.response.defer()
-    await log("generate_spotlight_post", f"{month-year.value} {format.value}")
+    await log("generate_spotlight_post", f"{month.value} {format.value}")
 
     guild = interaction.guild
     member = guild.get_member(interaction.user.id)
@@ -560,10 +621,10 @@ async def generate_spotlight_post(interaction: discord.Interaction, month-year: 
     lappland = create_client(url, key)
     existing_month = lappland.table("spotlight_set")\
                 .select("*")\
-                .eq("spotlight_month", month-year)\
+                .eq("spotlight_month", month)\
                 .execute()
     if not existing_month.data:
-        reply1 = await interaction.followup.send(f"No entry exists for {month-year}!")
+        reply1 = await interaction.followup.send(f"No entry exists for {month}!")
         await asyncio.sleep(1)
         await interaction.delete_messages([reply1])
         return
@@ -574,10 +635,10 @@ async def generate_spotlight_post(interaction: discord.Interaction, month-year: 
                 existing_format = lappland.table("spotlight_set")\
                         .select("*")\
                         .eq("format", i)\
-                        .eq("spotlight_month", month-year)\
+                        .eq("spotlight_month", month)\
                         .execute()
                 if not existing_format.data:
-                        reply2 = await interaction.followup.send(f"Sets for {i} doesn't exist for {month-year}!")
+                        reply2 = await interaction.followup.send(f"Sets for {i} doesn't exist for {month}!")
                         await asyncio.sleep(1)
                         await interaction.delete_messages([reply2])
                         return
@@ -590,7 +651,7 @@ async def generate_spotlight_post(interaction: discord.Interaction, month-year: 
                 existing = lappland.table("spotlight_set")\
                         .select("suggested_by")\
                         .eq("format", i)\
-                        .eq("spotlight_month", month-year)\
+                        .eq("spotlight_month", month)\
                         .execute()
                 result[i] = list(set(j["suggested_by"] for j in existing.data))
 
@@ -600,7 +661,7 @@ async def generate_spotlight_post(interaction: discord.Interaction, month-year: 
                 sets = lappland.table("spotlight_set")\
                         .select("set","pokemon","qc_notes","replay")\
                         .eq("format", key)\
-                        .eq("spotlight_month", month-year)\
+                        .eq("spotlight_month", month)\
                         .execute()
                 for j in sets.data:
                         if j["qc_notes"]:
