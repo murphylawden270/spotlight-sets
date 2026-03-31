@@ -24,7 +24,6 @@ spotlights_set_id = int(os.getenv("spotlights_set_id"))
 spotlight_staff = int(os.getenv("spotlight_staff"))
 reaction = os.getenv("reaction")
 reaction_id = int(os.getenv("reaction_id"))
-
 PORT = int(os.getenv("PORT", 8080))
 
 # regx pattern for different parts of spotlight message
@@ -309,7 +308,7 @@ class Client(commands.Bot):
                             await asyncio.sleep(5)
                         except discord.NotFound as e:
                             await log("fucked_up", error=str(e)) 
-                            return
+                            continue
 
             reply_2 = await spotlights.send("**Changes Implemented!**")
             await reply_1.delete()
@@ -386,16 +385,18 @@ class Client(commands.Bot):
             return
 
         spotlights_set = self.get_channel(spotlights_set_id)
-        store = await spotlights_set.send(message.content)
-        inserted_message = lappland.table("spotlight_set_message_id").insert({
-            "user_message_id": message.id,
-            "bot_message_id": store.id,
-            "spotlight_context": message.content,
-            "spotlight_month": month
-        })
-        await asyncio.to_thread(inserted_message.execute)
- 
-        await store_set(message, month)
+        try:
+            store = await spotlights_set.send(message.content)
+            inserted_message = lappland.table("spotlight_set_message_id").insert({
+                "user_message_id": message.id,
+                "bot_message_id": store.id,
+                "spotlight_context": message.content,
+                "spotlight_month": month
+            })
+            await asyncio.to_thread(inserted_message.execute)
+            await store_set(message, month)
+        except Exception as e:
+            await log("fucked_up", error=str(e))
 
 
     async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent):
@@ -427,81 +428,84 @@ class Client(commands.Bot):
             
             await log("on_raw_message_edit", payload.message_id)
             
-            bot_edit = await spotlights_set.fetch_message(bot_id)
+            try:
+                bot_edit = await spotlights_set.fetch_message(bot_id)
 
-            lappland = create_client(url, key)
-            month = await get_month()
-            await bot_edit.edit(content=after.content)
-            message_update =  lappland.table("spotlight_set_message_id").update({
-                "last_edit" : datetime.now(timezone.utc).isoformat(),
-                "spotlight_context": after.content,
-            }).eq("user_message_id", payload.message_id)
-            await asyncio.to_thread(message_update.execute)
+                lappland = create_client(url, key)
+                month = await get_month()
+                await bot_edit.edit(content=after.content)
+                message_update =  lappland.table("spotlight_set_message_id").update({
+                    "last_edit" : datetime.now(timezone.utc).isoformat(),
+                    "spotlight_context": after.content,
+                }).eq("user_message_id", payload.message_id)
+                await asyncio.to_thread(message_update.execute)
 
-            delete_old_set = lappland.table("spotlight_set").delete(
-            ).eq("user_message_id", payload.message_id)
-            await asyncio.to_thread(delete_old_set.execute)
+                delete_old_set = lappland.table("spotlight_set").delete(
+                ).eq("user_message_id", payload.message_id)
+                await asyncio.to_thread(delete_old_set.execute)
 
-            blocks = re.findall(spotlight_sets, after.content)
+                blocks = re.findall(spotlight_sets, after.content)
 
-            if len(blocks) == 1:
-                sets = re.split(individual_set, blocks[0].strip())
-            else:
-                sets = [i.strip() for i in blocks]
-
-            qcs = []
-            replays = []
-            sets2 = []
-            for i in sets:
-                if re.search(qc_pattern, i):
-                    qc = re.findall(qc_pattern, i)
-                    qcs.extend(qc)
-                    remove = re.sub(qc_pattern, '', i)
-                    sets2.append(remove)
-                elif re.search(replay_pattern, i):
-                    replay = re.findall(replay_pattern, i)
-                    replays.extend(replay)
-                    remove = re.sub(replay_pattern, '', i)
-                    sets2.append(remove)
+                if len(blocks) == 1:
+                    sets = re.split(individual_set, blocks[0].strip())
                 else:
-                    sets2.append(i)
-                    replays.append(None)
-                    qcs.append(None)
+                    sets = [i.strip() for i in blocks]
 
-            sets2 = ["\n".join(j.strip() for j in set.strip().splitlines()) for set in sets2]
+                qcs = []
+                replays = []
+                sets2 = []
+                for i in sets:
+                    if re.search(qc_pattern, i):
+                        qc = re.findall(qc_pattern, i)
+                        qcs.extend(qc)
+                        remove = re.sub(qc_pattern, '', i)
+                        sets2.append(remove)
+                    elif re.search(replay_pattern, i):
+                        replay = re.findall(replay_pattern, i)
+                        replays.extend(replay)
+                        remove = re.sub(replay_pattern, '', i)
+                        sets2.append(remove)
+                    else:
+                        sets2.append(i)
+                        replays.append(None)
+                        qcs.append(None)
 
-            format = re.findall(set_format, after.content)[0]
+                sets2 = ["\n".join(j.strip() for j in set.strip().splitlines()) for set in sets2]
 
-            suggester = re.search(set_suggester, after.content)
-            if suggester:
-                suggesters = [i.strip() for i in suggester.group(1).split(" and ")]
-            else:
-                suggesters = ["NA"]
+                format = re.findall(set_format, after.content)[0]
 
-            pokemons = []
-            for i in sets2:
-                mon = re.findall(pokemon, i)
-                pokemons.extend(mon)
+                suggester = re.search(set_suggester, after.content)
+                if suggester:
+                    suggesters = [i.strip() for i in suggester.group(1).split(" and ")]
+                else:
+                    suggesters = ["NA"]
 
-            if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
-                pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
-            elif len(suggesters) == 1:
-                pairs = [(mon, set, suggesters[0], qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
-            else:
-                pairs = [(mon, set, "NA", qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
+                pokemons = []
+                for i in sets2:
+                    mon = re.findall(pokemon, i)
+                    pokemons.extend(mon)
 
-            for mon, set, suggester, qc, replay in pairs:
-                insert_set = lappland.table("spotlight_set").insert({
-                    "user_message_id": payload.message_id,
-                    "format": format,
-                    "pokemon": mon,
-                    "set": set,
-                    "qc_notes": qc,
-                    "replay": replay,
-                    "suggested_by": suggester,
-                    "spotlight_month": month
-                })
-                await asyncio.to_thread(insert_set.execute)
+                if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
+                    pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
+                elif len(suggesters) == 1:
+                    pairs = [(mon, set, suggesters[0], qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
+                else:
+                    pairs = [(mon, set, "NA", qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
+
+                for mon, set, suggester, qc, replay in pairs:
+                    insert_set = lappland.table("spotlight_set").insert({
+                        "user_message_id": payload.message_id,
+                        "format": format,
+                        "pokemon": mon,
+                        "set": set,
+                        "qc_notes": qc,
+                        "replay": replay,
+                        "suggested_by": suggester,
+                        "spotlight_month": month
+                    })
+                    await asyncio.to_thread(insert_set.execute)
+            except Exception as e:
+                await log("fucked_up", error=str(e))
             
     async def on_raw_message_delete(self, payload: discord.RawMessageUpdateEvent):
 
@@ -616,32 +620,35 @@ async def start_set_collection(interaction: discord.Interaction, month: app_comm
     if not staff_role(member):
         await interaction.followup.send("**You don't have permission.**", ephemeral=True)
         return
-    
-    lappland = create_client(url, key)
-    channel = bot.get_channel(spotlights_id)
-    meow = lappland.table("spotlight_month").select("*").eq("spotlight_month", f"{month.value} {year.value}")
-    month_exists = await asyncio.to_thread(meow.execute)
-    if month_exists.data:
-        reply1 = await interaction.followup.send(f"**Sets have already been collected for {month.value} {year.value}!**")
+
+    try:    
+        lappland = create_client(url, key)
+        channel = bot.get_channel(spotlights_id)
+        meow = lappland.table("spotlight_month").select("*").eq("spotlight_month", f"{month.value} {year.value}")
+        month_exists = await asyncio.to_thread(meow.execute)
+        if month_exists.data:
+            reply1 = await interaction.followup.send(f"**Sets have already been collected for {month.value} {year.value}!**")
+            await asyncio.sleep(10)
+            await channel.delete_messages([reply1])
+            return
+
+        spotlights_set = bot.get_channel(spotlights_set_id)
+        await spotlights_set.send(f"# =================== {month.value} {year.value} Spotlight Sets ===================")
+        reply2 = await interaction.followup.send(f"**Set collection started for {month.value} {year.value}!**")
+        month_end = lappland.table("spotlight_month").update({
+            "active": False
+        }).eq("active", True)
+        await asyncio.to_thread(month_end.execute)
+
+        opening_month = lappland.table("spotlight_month").insert({
+        "spotlight_month": f"{month.value} {year.value}",
+        "active": True
+        })
+        await asyncio.to_thread(opening_month.execute)
         await asyncio.sleep(10)
-        await channel.delete_messages([reply1])
-        return
-
-    spotlights_set = bot.get_channel(spotlights_set_id)
-    await spotlights_set.send(f"# =================== {month.value} {year.value} Spotlight Sets ===================")
-    reply2 = await interaction.followup.send(f"**Set collection started for {month.value} {year.value}!**")
-    month_end = lappland.table("spotlight_month").update({
-        "active": False
-    }).eq("active", True)
-    await asyncio.to_thread(month_end.execute)
-
-    opening_month = lappland.table("spotlight_month").insert({
-    "spotlight_month": f"{month.value} {year.value}",
-    "active": True
-    })
-    await asyncio.to_thread(opening_month.execute)
-    await asyncio.sleep(10)
-    await channel.delete_messages([reply2])
+        await channel.delete_messages([reply2])
+    except Exception as e:
+        await log("fucked_up", error=str(e)) 
 
 @bot.tree.command(name="generate_spotlight_post", description="start collecting sets for the month", guild=discord.Object(id=socmed_server))
 @app_commands.describe(month = "month of the post")
@@ -666,70 +673,74 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
 # Step 7: Append format into a list "bbcode". Print "\n".join(bbcode) outside the outer loop to get all the elements of the bbcode printed one line after another. Tp get a line gap between each format's block, append an "empty string" to bbcode outside the inner loop.
 # That's all!!!
 
-    lappland = create_client(url, key)
-    existing_month = lappland.table("spotlight_set")\
-                .select("*")\
-                .eq("spotlight_month", month)\
-                .execute()
-    if not existing_month.data:
-        reply1 = await interaction.followup.send(f"No entry exists for {month}!")
-        await asyncio.sleep(1)
-        await interaction.delete_messages([reply1])
-        return
-    else:
-        formats = []
-        for i in format.split(","):
-                i = i.strip()
-                existing_format = lappland.table("spotlight_set")\
-                        .select("*")\
-                        .eq("format", i)\
-                        .eq("spotlight_month", month)\
-                        .execute()
-                if not existing_format.data:
-                        reply2 = await interaction.followup.send(f"Sets for {i} doesn't exist for {month}!")
-                        await asyncio.sleep(1)
-                        await interaction.delete_messages([reply2])
-                        return
-                else:
-                        formats.append(i)
-                
-        bbcode = []
-        result = {}
-        for i in formats:
-                existing = lappland.table("spotlight_set")\
-                        .select("suggested_by")\
-                        .eq("format", i)\
-                        .eq("spotlight_month", month)\
-                        .execute()
-                result[i] = list(set(j["suggested_by"] for j in existing.data))
+    try:
+        lappland = create_client(url, key)
+        existing_month = lappland.table("spotlight_set")\
+                    .select("*")\
+                    .eq("spotlight_month", month)\
+                    .execute()
+        if not existing_month.data:
+            reply1 = await interaction.followup.send(f"No entry exists for {month}!")
+            await asyncio.sleep(1)
+            await interaction.delete_messages([reply1])
+            return
+        else:
+            formats = []
+            for i in format.split(","):
+                    i = i.strip()
+                    existing_format = lappland.table("spotlight_set")\
+                            .select("*")\
+                            .eq("format", i)\
+                            .eq("spotlight_month", month)\
+                            .execute()
+                    if not existing_format.data:
+                            reply2 = await interaction.followup.send(f"Sets for {i} doesn't exist for {month}!")
+                            await asyncio.sleep(1)
+                            await interaction.delete_messages([reply2])
+                            return
+                    else:
+                            formats.append(i)
+                    
+            bbcode = []
+            result = {}
+            for i in formats:
+                    existing = lappland.table("spotlight_set")\
+                            .select("suggested_by")\
+                            .eq("format", i)\
+                            .eq("spotlight_month", month)\
+                            .execute()
+                    result[i] = list(set(j["suggested_by"] for j in existing.data))
 
-        for key, values in result.items():
-                header = (f"[B]{key}[/B], courtesy of {' and '.join(f'@{i}' for i in values)}")
-                bbcode.append(header)
-                sets = lappland.table("spotlight_set")\
-                        .select("set","pokemon","qc_notes","replay")\
-                        .eq("format", key)\
-                        .eq("spotlight_month", month)\
-                        .execute()
-                for j in sets.data:
-                        if j["qc_notes"]:
-                                qc = f'\n[Spoiler="QC Notes"]{j["qc_notes"]}[/Spoiler]'
-                        else:
-                                qc = ""
-                        if j["replay"]:
-                                replay = f'\n[Spoiler="Replay"]{j["replay"]}[/Spoiler]'
-                        else:
-                                replay = ""
-                        format_block = (f':{j["pokemon"]}:\n{j["set"]}{qc}{replay}')
-                        bbcode.append(format_block)
-                bbcode.append("")
+            for key, values in result.items():
+                    header = (f"[B]{key}[/B], courtesy of {' and '.join(f'@{i}' for i in values)}")
+                    bbcode.append(header)
+                    sets = lappland.table("spotlight_set")\
+                            .select("set","pokemon","qc_notes","replay")\
+                            .eq("format", key)\
+                            .eq("spotlight_month", month)\
+                            .execute()
+                    for j in sets.data:
+                            if j["qc_notes"]:
+                                    qc = f'\n[Spoiler="QC Notes"]{j["qc_notes"]}[/Spoiler]'
+                            else:
+                                    qc = ""
+                            if j["replay"]:
+                                    replay = f'\n[Spoiler="Replay"]{j["replay"]}[/Spoiler]'
+                            else:
+                                    replay = ""
+                            format_block = (f':{j["pokemon"]}:\n{j["set"]}{qc}{replay}')
+                            bbcode.append(format_block)
+                    bbcode.append("")
 
-        bb = "\n".join(bbcode)
-        bbcode_string = io.BytesIO(bb.encode("utf-8"))
-        spotlight = discord.File(fp=bbcode_string, filename='spotlight.txt')
-        reply3 = await interaction.followup.send(file=spotlight)
-        await asyncio.sleep(900)
-        await interaction.delete_messages([reply3])
+            bb = "\n".join(bbcode)
+            bbcode_string = io.BytesIO(bb.encode("utf-8"))
+            spotlight = discord.File(fp=bbcode_string, filename='spotlight.txt')
+            reply3 = await interaction.followup.send(file=spotlight)
+            await asyncio.sleep(900)
+            await interaction.delete_messages([reply3])
+    except Exception as e:
+        await log("fucked_up", error=str(e)) 
+        await interaction.followup.send("**Something went wrong!**", ephemeral=True)
 
 async def main():
     await asyncio.gather(
