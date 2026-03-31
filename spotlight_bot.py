@@ -22,7 +22,8 @@ def home():
     return "Bot is running!"
 
 def run():
-    app.run(host='0.0.0.0', port=8080)
+    from waitress import serve
+    serve(app, host='0.0.0.0', port=8080)
 
 def keep_alive():
     t = Thread(target=run)
@@ -99,6 +100,9 @@ def staff_role(member):
 class Client(commands.Bot):
 
     async def on_ready(self):
+        if hasattr(self, '_ready_called'): 
+            return                           
+        self._ready_called = True     
         await log("on_ready")
         print(f'logged in as {self.user}!')
 
@@ -217,7 +221,8 @@ class Client(commands.Bot):
 
             reply_2 = await spotlights.send("**Changes Implemented!**")
             await reply_1.delete()
-            await spotlights.delete_messages([start_1, start_2, start_3])
+            await spotlights.delete_messages([start_1, start_2])
+            await start_3.delete()
 
 
         async def no_callback(interaction):
@@ -234,7 +239,8 @@ class Client(commands.Bot):
             reply_3 = await interaction.followup.send("**Changes will not be implemented.**")
             await asyncio.sleep(2)
             await reply_3.delete()
-            await spotlights.delete_messages([start_1, start_2, start_3])
+            await spotlights.delete_messages([start_1, start_2])
+            await start_3.delete()
 
         Yes = Button(label="Yes", style=discord.ButtonStyle.green)
         No = Button(label="No", style=discord.ButtonStyle.red)
