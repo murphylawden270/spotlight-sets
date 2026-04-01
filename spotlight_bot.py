@@ -215,7 +215,7 @@ class Client(commands.Bot):
 
         self.spotlights_set = self.get_channel(spotlights_set_id)
 
-        start_1 = await spotlights.send("**Spotlight Bot Is Online!**")
+        start_1 = await spotlights.send("**Spotlight Sets Is Online!**")
         start_2 = await spotlights.send("**Fetching Messages...**")
 
         async def yes_callback(interaction):
