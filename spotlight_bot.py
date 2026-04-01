@@ -215,7 +215,7 @@ class Client(commands.Bot):
 
         self.spotlights_set = self.get_channel(spotlights_set_id)
 
-        start_1 = await spotlights.send("**Spotlight Sets Is Online!**")
+        start_1 = await spotlights.send("**Spotlight Bot Is Online!**")
         start_2 = await spotlights.send("**Fetching Messages...**")
 
         async def yes_callback(interaction):
@@ -242,7 +242,6 @@ class Client(commands.Bot):
             else:
                 last_offline = None
 
-            sent_date = datetime(2026, 4, 1, tzinfo=timezone.utc) # messages before April 1st go to old_spotlight_set_message_id, newer to spotlight_set_message_id
             button.stop()
             reply_1 = await interaction.followup.send("**Implementing changes...**")
             messages = [message async for message in spotlights.history(limit=None, after=last_offline)]
@@ -253,32 +252,22 @@ class Client(commands.Bot):
                     if not re.search(spotlight_message, message.content):
                         continue
 
-                    if not last_offline or message.created_at < sent_date:
-                        select_table = "old_spotlight_set_message_id"
-                    elif spotlight_reaction(message, reaction, reaction_id):
-                        select_table = "spotlight_set_message_id"
-                    else:
+                    if not spotlight_reaction(message, reaction, reaction_id):
                         continue
 
-                    existing_id = lappland.table(select_table).select("*").eq("user_message_id", message.id)
+                    existing_id = lappland.table("spotlight_set_message_id").select("*").eq("user_message_id", message.id)
                     meow = await asyncio.to_thread(existing_id.execute)
 
                     if not meow.data:
-                        if select_table == "spotlight_set_message_id":
-                            content = await spotlights_set.send(message.content)
-                            stored_message = lappland.table(select_table).insert({
-                                "user_message_id": message.id,
-                                "bot_message_id": content.id,
-                                "spotlight_context": message.content
-                            })
-                            await store_set(message, month)
-                        else:
-                            stored_message = lappland.table(select_table).insert({
-                                "user_message_id": message.id,
-                                "spotlight_context": message.content
-                            })
+                        content = await spotlights_set.send(message.content)
+                        stored_message = lappland.table("spotlight_set_message_id").insert({
+                            "user_message_id": message.id,
+                            "bot_message_id": content.id,
+                            "spotlight_context": message.content
+                        })
+                        await store_set(message, month)
                         await asyncio.to_thread(stored_message.execute)
-                        print(f"Inserted message {message.id} into {select_table}")
+                        print(f"Inserted message {message.id} into spotlight_set_message_id")
                         await asyncio.sleep(5)
 
                     else:
@@ -291,31 +280,30 @@ class Client(commands.Bot):
                                 try:
                                     bot_edit = await spotlights_set.fetch_message(bot_id)
                                     await bot_edit.edit(content=message.content)
-                                    edited_message = lappland.table(select_table).update({
+                                    edited_message = lappland.table("spotlight_set_message_id").update({
                                         "last_edit": datetime.now(timezone.utc).isoformat(),
                                         "spotlight_context": message.content,
                                     }).eq("user_message_id", message.id)
-                                    print(f"edited message {message.id} from select_table")
+                                    print(f"edited message {message.id} from spotlight_set_message_id")
                                     await asyncio.to_thread(edited_message.execute)
                                     await store_set(message, month)
                                 except discord.NotFound as e:
-                                        await log("fucked_up", error=str(e))
-                                        print("fucked up:",e)
-                                        return
+                                    await log("fucked_up", error=str(e))
+                                    print("fucked up:", e)
+                                    return
                                 except discord.Forbidden as e:
-                                    await log("fucked_up", error=str(e)) 
-                                    print("fucked up:",e)
+                                    await log("fucked_up", error=str(e))
+                                    print("fucked up:", e)
                             else:
                                 await asyncio.sleep(5)
                         except discord.NotFound as e:
-                            await log("fucked_up", error=str(e)) 
-                            print("fucked up:",e)
+                            await log("fucked_up", error=str(e))
+                            print("fucked up:", e)
                             await asyncio.sleep(5)
                 except Exception as e:
                     await log("fucked_up", error=str(e))
-                    print("fucked up:",e)
+                    print("fucked up:", e)
                     continue
-
             reacted_message_ids = [
                 str(message.id) for message in messages
                 if spotlight_reaction(message, reaction, reaction_id) and re.search(spotlight_message, message.content)
