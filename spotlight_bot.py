@@ -93,6 +93,7 @@ async def bot_message_id(message_id):
         return id.data[0]["bot_message_id"]
     except Exception as e:
         await log("fucked_up", error=str(e))
+        print("fucked up:",e)
 
 async def get_month():
     await log("get_month")
@@ -105,6 +106,7 @@ async def get_month():
         return month.data[0]["spotlight_month"]
     except Exception as e:
         await log("fucked_up", error=str(e))
+        print("fucked up:",e)
 
 def spotlight_reaction(message, reaction, reaction_id):
     return any(
@@ -180,13 +182,11 @@ async def store_set(message, month):
             await asyncio.to_thread(insert_set.execute)
     except Exception as e:
         await log("fucked_up", error=str(e))
+        print("fucked up:",e)
 
 class Client(commands.Bot):
 
-    async def on_ready(self):
-        if hasattr(self, '_ready_called'): 
-            return                           
-        self._ready_called = True     
+    async def on_ready(self):  
         await log("on_ready")
         print(f'logged in as {self.user}!')
 
@@ -194,7 +194,8 @@ class Client(commands.Bot):
             synced = await self.tree.sync(guild=discord.Object(id=socmed_server))
             print(f'Synced {len(synced)} commands to server {socmed_server}')
         except Exception as e:
-            await log("fucked_up", error=str(e))       
+            await log("fucked_up", error=str(e))    
+            print("fucked up:",e)   
 
         server = self.get_guild(socmed_server)
         spotlights_set = self.get_channel(spotlights_set_id)
@@ -216,7 +217,9 @@ class Client(commands.Bot):
             member = guild.get_member(interaction.user.id)
 
             if not staff_role(member):
-                await interaction.followup.send("**You don't have permission.**", ephemeral=True)
+                reply = await interaction.followup.send("*You don't have permission.*")
+                await asyncio.sleep(1)
+                await reply.delete()
                 return
             
             lappland = create_client(url, key)
@@ -227,16 +230,15 @@ class Client(commands.Bot):
             month = await get_month()
             for message in messages:
                 try:
-                    if not spotlight_reaction(message, reaction, reaction_id):
-                        continue
-
                     if not re.search(spotlight_message, message.content):
                         continue
 
                     if message.created_at < sent_date:
                         select_table = "old_spotlight_set_message_id"
-                    else:
+                    elif message.created_at >= sent_date and spotlight_reaction(message, reaction, reaction_id):
                         select_table = "spotlight_set_message_id"
+                    else:
+                        continue
 
                     existing_id = lappland.table(select_table).select("*").eq("user_message_id", message.id)
                     meow = await asyncio.to_thread(existing_id.execute)
@@ -276,16 +278,20 @@ class Client(commands.Bot):
                                     await store_set(message, month)
                                 except discord.NotFound as e:
                                         await log("fucked_up", error=str(e))
+                                        print("fucked up:",e)
                                         return
                                 except discord.Forbidden as e:
                                     await log("fucked_up", error=str(e)) 
+                                    print("fucked up:",e)
                             else:
                                 await asyncio.sleep(5)
                         except discord.NotFound as e:
                             await log("fucked_up", error=str(e)) 
+                            print("fucked up:",e)
                             await asyncio.sleep(5)
                 except Exception as e:
                     await log("fucked_up", error=str(e))
+                    print("fucked up:",e)
                     continue
 
             reacted_message_ids = [
@@ -308,6 +314,7 @@ class Client(commands.Bot):
                             await asyncio.sleep(5)
                         except discord.NotFound as e:
                             await log("fucked_up", error=str(e)) 
+                            print("fucked up:",e)
                             continue
 
             reply_2 = await spotlights.send("**Changes Implemented!**")
@@ -323,7 +330,9 @@ class Client(commands.Bot):
             member = guild.get_member(interaction.user.id)
 
             if not staff_role(member):
-                await interaction.followup.send("**You don't have permission.**", ephemeral=True)
+                reply = await interaction.followup.send("*You don't have permission.*")
+                await asyncio.sleep(1)
+                await reply.delete()
                 return
             
             button.stop()
@@ -369,6 +378,7 @@ class Client(commands.Bot):
             message = await channel.fetch_message(payload.message_id)
         except discord.NotFound as e:
             await log("fucked_up", error=str(e)) 
+            print("fucked up:",e)
             return
 
         if not re.search(spotlight_message, message.content):
@@ -397,7 +407,7 @@ class Client(commands.Bot):
             await store_set(message, month)
         except Exception as e:
             await log("fucked_up", error=str(e))
-
+            print("fucked up:",e)
 
     async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent):
             if payload.guild_id is None or payload.guild_id != socmed_server or payload.channel_id != spotlights_id:
@@ -412,6 +422,7 @@ class Client(commands.Bot):
                 after = await channel.fetch_message(payload.message_id)
             except discord.NotFound as e:
                 await log("fucked_up", error=str(e)) 
+                print("fucked up:",e)
                 return
 
             if after.author == self.user:
@@ -506,6 +517,7 @@ class Client(commands.Bot):
                     await asyncio.to_thread(insert_set.execute)
             except Exception as e:
                 await log("fucked_up", error=str(e))
+                print("fucked up:",e)
             
     async def on_raw_message_delete(self, payload: discord.RawMessageUpdateEvent):
 
@@ -526,6 +538,7 @@ class Client(commands.Bot):
             bot_delete = await spotlights_set.fetch_message(bot_id)
         except discord.NotFound as e:
             await log("fucked_up", error=str(e)) 
+            print("fucked up:",e)
             return
                     
         channel = self.get_channel(spotlights_id)
@@ -540,7 +553,9 @@ class Client(commands.Bot):
             member = guild.get_member(interaction.user.id)
 
             if not staff_role(member):
-                await interaction.followup.send("**You don't have permission.**", ephemeral=True)
+                reply = await interaction.followup.send("*You don't have permission.*")
+                await asyncio.sleep(1)
+                await reply.delete()
                 return
             
             try:
@@ -553,11 +568,12 @@ class Client(commands.Bot):
                     await asyncio.to_thread(deleted_message.execute)
                 
                 await bot_delete.delete()
-                reply = await interaction.followup.send("**Message Deleted!**")
+                reply1 = await interaction.followup.send("**Message Deleted!**")
                 await asyncio.sleep(2)
-                await reply.delete()
+                await channel.delete_messages([prompt, reply1])
             except Exception as e:
                 await log("fucked_up", error=str(e)) 
+                print("fucked up:",e)
 
         async def no_callback(interaction):
             await interaction.response.defer()
@@ -566,12 +582,14 @@ class Client(commands.Bot):
             member = guild.get_member(interaction.user.id)
 
             if not staff_role(member):
-                await interaction.followup.send("**You don't have permission.**", ephemeral=True)
+                reply = await interaction.followup.send("*You don't have permission.*")
+                await asyncio.sleep(1)
+                await reply.delete()
                 return
             
-            reply = await interaction.followup.send("*Message will not be deleted.*")
+            reply2 = await interaction.followup.send("**Message will not be deleted.**")
             await asyncio.sleep(2)
-            await reply.delete()
+            await channel.delete_messages([prompt, reply2])
 
         Yes.callback = yes_callback
         No.callback = no_callback
@@ -579,7 +597,7 @@ class Client(commands.Bot):
         button = View()
         button.add_item(Yes)
         button.add_item(No)
-        prompt = await channel.send("**Do you wish to delete this message?**",view=button)
+        prompt = await channel.send(f"**Do you wish to delete the message in https://discord.com/channels/{socmed_server}/{spotlights_set_id}/{bot_delete.id}?**", view=button)
             
 intents = discord.Intents.default()
 intents.message_content = True
@@ -616,9 +634,11 @@ async def start_set_collection(interaction: discord.Interaction, month: app_comm
 
     guild = interaction.guild
     member = guild.get_member(interaction.user.id)
-
+    
     if not staff_role(member):
-        await interaction.followup.send("**You don't have permission.**", ephemeral=True)
+        reply = await interaction.followup.send("*You don't have permission.*")
+        await asyncio.sleep(1)
+        await reply.delete()
         return
 
     try:    
@@ -649,10 +669,11 @@ async def start_set_collection(interaction: discord.Interaction, month: app_comm
         await channel.delete_messages([reply2])
     except Exception as e:
         await log("fucked_up", error=str(e)) 
+        print("fucked up:",e)
 
 @bot.tree.command(name="generate_spotlight_post", description="start collecting sets for the month", guild=discord.Object(id=socmed_server))
 @app_commands.describe(month = "month of the post")
-@app_commands.describe(month = "comma-separated formats e.g. BSS, NatDex Ubers")
+@app_commands.describe(format = "comma-separated formats e.g. BSS, NatDex Ubers")
 async def generate_spotlight_post(interaction: discord.Interaction, month: str, format: str):
     await interaction.response.defer()
     await log("generate_spotlight_post", f"{month} {format}")
@@ -661,7 +682,9 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
     member = guild.get_member(interaction.user.id)
 
     if not staff_role(member):
-        await interaction.followup.send("**You don't have permission.**", ephemeral=True)
+        reply = await interaction.followup.send("*You don't have permission.*")
+        await asyncio.sleep(1)
+        await reply.delete()
         return
     
 # Step 1: Month and Formats are taken as input. 
@@ -671,32 +694,32 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
 # Step 5: For every format, print each set in sets.data.
 # Step 6: Handle QC and Replay. Simplest solution was to store them separetely in the db at the time the set was originally stored in the db. Then if j["qc_notes"] is not NULL, store it to a variable qc, else store "empty string" in qc, which you will add to your print statement. Same with Replays
 # Step 7: Append format into a list "bbcode". Print "\n".join(bbcode) outside the outer loop to get all the elements of the bbcode printed one line after another. Tp get a line gap between each format's block, append an "empty string" to bbcode outside the inner loop.
-# That's all!!!
+# So I can reuse this logic in other projects
 
     try:
         lappland = create_client(url, key)
-        existing_month = lappland.table("spotlight_set")\
+        meow = lappland.table("spotlight_set")\
                     .select("*")\
-                    .eq("spotlight_month", month)\
-                    .execute()
+                    .eq("spotlight_month", month)
+        existing_month = await asyncio.to_thread(meow.execute)
         if not existing_month.data:
             reply1 = await interaction.followup.send(f"No entry exists for {month}!")
             await asyncio.sleep(1)
-            await interaction.delete_messages([reply1])
+            await reply1.delete()
             return
         else:
             formats = []
             for i in format.split(","):
                     i = i.strip()
-                    existing_format = lappland.table("spotlight_set")\
+                    meow = lappland.table("spotlight_set")\
                             .select("*")\
                             .eq("format", i)\
-                            .eq("spotlight_month", month)\
-                            .execute()
+                            .eq("spotlight_month", month)
+                    existing_format = await asyncio.to_thread(meow.execute)
                     if not existing_format.data:
                             reply2 = await interaction.followup.send(f"Sets for {i} doesn't exist for {month}!")
                             await asyncio.sleep(1)
-                            await interaction.delete_messages([reply2])
+                            await reply2.delete()
                             return
                     else:
                             formats.append(i)
@@ -704,21 +727,21 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
             bbcode = []
             result = {}
             for i in formats:
-                    existing = lappland.table("spotlight_set")\
+                    meow = lappland.table("spotlight_set")\
                             .select("suggested_by")\
                             .eq("format", i)\
-                            .eq("spotlight_month", month)\
-                            .execute()
+                            .eq("spotlight_month", month)
+                    existing = await asyncio.to_thread(meow.execute)
                     result[i] = list(set(j["suggested_by"] for j in existing.data))
 
             for key, values in result.items():
                     header = (f"[B]{key}[/B], courtesy of {' and '.join(f'@{i}' for i in values)}")
                     bbcode.append(header)
-                    sets = lappland.table("spotlight_set")\
+                    meow = lappland.table("spotlight_set")\
                             .select("set","pokemon","qc_notes","replay")\
                             .eq("format", key)\
-                            .eq("spotlight_month", month)\
-                            .execute()
+                            .eq("spotlight_month", month)
+                    sets = await asyncio.to_thread(meow.execute)
                     for j in sets.data:
                             if j["qc_notes"]:
                                     qc = f'\n[Spoiler="QC Notes"]{j["qc_notes"]}[/Spoiler]'
@@ -737,13 +760,54 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
             spotlight = discord.File(fp=bbcode_string, filename='spotlight.txt')
             reply3 = await interaction.followup.send(file=spotlight)
             await asyncio.sleep(900)
-            await interaction.delete_messages([reply3])
+            await reply3.delete()
     except Exception as e:
         await log("fucked_up", error=str(e)) 
-        await interaction.followup.send("**Something went wrong!**", ephemeral=True)
+        print("fucked up:",e)
+        reply4 = await interaction.followup.send("**Something went wrong!**")
+        await asyncio.sleep(1)
+        await reply4.delete()
+
+@bot.tree.command(name="current_month_and_sets", description="check the current month and sets available", guild=discord.Object(id=socmed_server))
+async def current_month_and_sets(interaction: discord.Interaction):
+    await interaction.response.defer()
+    await log("current_month_and_sets")
+
+    guild = interaction.guild
+    member = guild.get_member(interaction.user.id)
+
+    if not staff_role(member):
+        reply = await interaction.followup.send("*You don't have permission.*")
+        await asyncio.sleep(1)
+        await reply.delete()
+        return
+    
+    try: 
+        month = await get_month()
+        formats = []
+        lappland = create_client(url, key)
+        meow = lappland.table("spotlight_set")\
+                    .select("format")\
+                    .eq("spotlight_month", month)
+        format = await asyncio.to_thread(meow.execute)
+        if not format.data:
+            reply1 = await interaction.followup.send(f"No set exists for {month}!")
+            await asyncio.sleep(1)
+            await reply1.delete()
+            return
+        else:
+            for i in format.data:
+                if i["format"] not in formats:
+                    formats.append(i["format"])
+        reply2 = await interaction.followup.send(f"Current Month: {month}\nFomats Available: {formats}")
+        await asyncio.sleep(900)
+        await reply2.delete()
+        return
+    except Exception as e:
+        await log("fucked_up", error=str(e)) 
+        print("fucked up:",e)
 
 async def main():
-    print("Starting...")
     await asyncio.gather(
         start_web_server(),
         bot.start(token)
