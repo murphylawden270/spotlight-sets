@@ -216,8 +216,12 @@ class Client(commands.Bot):
 
         self.spotlights_set = self.get_channel(spotlights_set_id)
 
-        start_1 = await spotlights.send("**Spotlight Bot Is Online!**", silent=True)
-        start_2 = await spotlights.send("**Fetching Messages...**", silent=True)
+        try:
+            start_1 = await spotlights.send("**Spotlight Bot Is Online!**", silent=True)
+            start_2 = await spotlights.send("**Fetching Messages...**", silent=True)
+        except discord.Forbidden:
+            print("Cannot send messages to spotlights channel.")
+            return
 
         async def yes_callback(interaction):
             await interaction.response.defer() 
