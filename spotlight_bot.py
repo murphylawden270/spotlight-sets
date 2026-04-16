@@ -805,12 +805,12 @@ async def generate_spotlight_post(interaction: discord.Interaction, month: str, 
                     existing = await asyncio.to_thread(meow.execute)
                     result[i] = list(set(j["suggested_by"] for j in existing.data))
 
-            for key, values in result.items():
-                    header = (f"[B]{key}[/B], courtesy of {' and '.join(f'@{i}' for i in values)}")
+            for frmt, values in result.items():
+                    header = (f"[B]{frmt}[/B], courtesy of {' and '.join(f'@{i}' for i in values)}")
                     bbcode.append(header)
                     meow = lappland.table("spotlight_set")\
                             .select("set","pokemon","qc_notes","replay")\
-                            .eq("format", key)\
+                            .eq("format", frmt)\
                             .eq("spotlight_month", month)
                     sets = await asyncio.to_thread(meow.execute)
                     for j in sets.data:
