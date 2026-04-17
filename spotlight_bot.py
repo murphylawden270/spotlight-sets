@@ -249,7 +249,7 @@ class Client(commands.Bot):
             month = await get_month()
             for message in messages:
                 try:
-                    if not re.search(spotlight_message, message.content):
+                    if not re.search(section_pattern, message.content):
                         continue
 
                     if not spotlight_reaction(message, reaction, reaction_id):
@@ -438,7 +438,7 @@ class Client(commands.Bot):
             print("fucked up:",e)
             return
 
-        if not re.search(spotlight_message, message.content):
+        if not re.search(section_pattern, message.content):
             return
         
         await log("on_raw_reaction_add", payload.message_id)
