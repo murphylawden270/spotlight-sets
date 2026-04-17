@@ -29,9 +29,7 @@ reaction_id = int(os.getenv("reaction_id"))
 PORT = int(os.getenv("PORT", 8080))
 
 # regx pattern for different parts of spotlight message
-spotlight_message = r"^.+ by .+\n?```[\s\S]+```$"
-spotlight_sets = r"```([\s\S]+?)```"
-individual_set = r"\n\s*\n"
+section_pattern = r"(?ms)^(.+?) by (.+?)\n```(.*?)```"
 set_format = r"(^.+) by"
 set_suggester = r"by (.+)\n?```"
 pokemon = r"^(.+?)\s*@"
@@ -128,70 +126,67 @@ def staff_role(member):
 
 async def store_set(message, month):
     try:
-        lappland = create_client(url, key)
-        blocks = re.findall(spotlight_sets, message.content)
+        sections = re.findall(section_pattern, message.content)
 
-        if len(blocks) == 1:
-            sets = re.split(individual_set, blocks[0].strip())
-        else:
-            sets = [i.strip() for i in blocks]
+        for format_name, suggester_text, block in sections:
+            suggesters = [s.strip() for s in re.split(r"\s+(?:and|&)\s+", suggester_text)] if suggester_text else ["NA"]
+            raw_sets = re.split(r"\n\s*\n", block.strip())
 
-        qcs = []
-        replays = []
-        sets2 = []
-        for i in sets:
-            if re.search(qc_pattern, i):
-                qc = re.findall(qc_pattern, i)
-                qcs.extend(qc)
-                remove = re.sub(qc_pattern, '', i)
-                sets2.append(remove)
-            elif re.search(replay_pattern, i):
-                replay = re.findall(replay_pattern, i)
-                replays.extend(replay)
-                remove = re.sub(replay_pattern, '', i)
-                sets2.append(remove)
+            qcs = []
+            replays = []
+            sets2 = []
+            pokemons = []
+
+            for s in raw_sets:
+                s = s.strip()
+                if not s:
+                    continue
+
+                qc = None
+                replay = None
+
+                qc_match = re.search(qc_pattern, s)
+                if qc_match:
+                    qc = qc_match.group(1).strip()
+                    s = re.sub(qc_pattern, '', s)
+
+                replay_match = re.search(replay_pattern, s)
+                if replay_match:
+                    replay = replay_match.group(1).strip()
+                    s = re.sub(replay_pattern, '', s)
+
+                s = "\n".join(line.strip() for line in s.strip().splitlines())
+                mon = re.findall(pokemon, s)
+                if not mon:
+                    continue
+
+                pokemons.append(mon[0])
+                sets2.append(s)
+                qcs.append(qc)
+                replays.append(replay)
+
+            if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
+                pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
+            elif len(suggesters) == 1:
+                pairs = [(mon, set_text, suggesters[0], qc, replay) for mon, set_text, qc, replay in zip(pokemons, sets2, qcs, replays)]
             else:
-                sets2.append(i)
-                replays.append(None)
-                qcs.append(None)
+                pairs = [(mon, set_text, "NA", qc, replay) for mon, set_text, qc, replay in zip(pokemons, sets2, qcs, replays)]
 
-        sets2 = ["\n".join(j.strip() for j in set.strip().splitlines()) for set in sets2]
+            for mon, set_text, suggester, qc, replay in pairs:
+                lappland.table("spotlight_set").insert({
+                    "user_message_id": message.id,
+                    "format": format_name.strip(),
+                    "pokemon": mon,
+                    "set": set_text,
+                    "qc_notes": qc,
+                    "replay": replay,
+                    "suggested_by": suggester,
+                    "spotlight_month": month
+                }).execute()
 
-        format = re.findall(set_format, message.content)[0]
-
-        suggester = re.search(set_suggester, message.content)
-        if suggester:
-            suggesters = [i.strip() for i in suggester.group(1).split(" and ")]
-        else:
-            suggesters = ["NA"]
-
-        pokemons = []
-        for i in sets2:
-            mon = re.findall(pokemon, i)
-            pokemons.extend(mon)
-
-        if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
-            pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
-        elif len(suggesters) == 1:
-            pairs = [(mon, set, suggesters[0], qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
-        else:
-            pairs = [(mon, set, "NA", qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
-
-        for mon, set, suggester, qc, replay in pairs:
-            insert_set = lappland.table("spotlight_set").insert({
-                "user_message_id": message.id,
-                "format": format,
-                "pokemon": mon,
-                "set": set,
-                "qc_notes": qc,
-                "replay": replay,
-                "suggested_by": suggester,
-                "spotlight_month": month
-            })
-            await asyncio.to_thread(insert_set.execute)
     except Exception as e:
         await log("fucked_up", error=str(e))
-        print("fucked up:",e)
+        print("fucked up:", e)
 
 class Client(commands.Bot):
 
@@ -503,85 +498,64 @@ class Client(commands.Bot):
         await log("on_raw_message_edit", payload.message_id)
         print(f"on_raw_message_edit triggered for {payload.message_id}")
 
-        try:
-            bot_edit = await spotlights_set.fetch_message(bot_id)
-
-            lappland = create_client(url, key)
-            month = await get_month()
-            await bot_edit.edit(content=after.content)
-            message_update =  lappland.table("spotlight_set_message_id").update({
-                "last_edit" : datetime.now(timezone.utc).isoformat(),
-                "spotlight_context": after.content,
-            }).eq("user_message_id", payload.message_id)
-            await asyncio.to_thread(message_update.execute)
-
-            delete_old_set = lappland.table("spotlight_set").delete(
-            ).eq("user_message_id", payload.message_id)
-            await asyncio.to_thread(delete_old_set.execute)
-
-            blocks = re.findall(spotlight_sets, after.content)
-
-            if len(blocks) == 1:
-                sets = re.split(individual_set, blocks[0].strip())
-            else:
-                sets = [i.strip() for i in blocks]
-
+        sections = re.findall(section_pattern, after.content)
+        
+        for format_name, suggester_text, block in sections:
+            suggesters = [s.strip() for s in re.split(r"\s+(?:and|&)\s+", suggester_text)] if suggester_text else ["NA"]
+            raw_sets = re.split(r"\n\s*\n", block.strip())
+        
             qcs = []
             replays = []
             sets2 = []
-            for i in sets:
-                if re.search(qc_pattern, i):
-                    qc = re.findall(qc_pattern, i)
-                    qcs.extend(qc)
-                    remove = re.sub(qc_pattern, '', i)
-                    sets2.append(remove)
-                elif re.search(replay_pattern, i):
-                    replay = re.findall(replay_pattern, i)
-                    replays.extend(replay)
-                    remove = re.sub(replay_pattern, '', i)
-                    sets2.append(remove)
-                else:
-                    sets2.append(i)
-                    replays.append(None)
-                    qcs.append(None)
-
-            sets2 = ["\n".join(j.strip() for j in set.strip().splitlines()) for set in sets2]
-
-            format = re.findall(set_format, after.content)[0]
-
-            suggester = re.search(set_suggester, after.content)
-            if suggester:
-                suggesters = [i.strip() for i in suggester.group(1).split(" and ")]
-            else:
-                suggesters = ["NA"]
-
             pokemons = []
-            for i in sets2:
+        
+            for i in raw_sets:
+                i = i.strip()
+                if not i:
+                    continue
+        
+                qc = None
+                replay = None
+        
+                qc_match = re.search(qc_pattern, i)
+                if qc_match:
+                    qc = qc_match.group(1).strip()
+                    i = re.sub(qc_pattern, '', i)
+        
+                replay_match = re.search(replay_pattern, i)
+                if replay_match:
+                    replay = replay_match.group(1).strip()
+                    i = re.sub(replay_pattern, '', i)
+        
+                i = "\n".join(line.strip() for line in i.strip().splitlines())
                 mon = re.findall(pokemon, i)
-                pokemons.extend(mon)
-
+                if not mon:
+                    continue
+        
+                pokemons.append(mon[0])
+                sets2.append(i)
+                qcs.append(qc)
+                replays.append(replay)
+        
             if len(suggesters) == len(sets2) == len(pokemons) == len(qcs) == len(replays):
                 pairs = list(zip(pokemons, sets2, suggesters, qcs, replays))
             elif len(suggesters) == 1:
-                pairs = [(mon, set, suggesters[0], qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
+                pairs = [(mon, set_text, suggesters[0], qc, replay) for mon, set_text, qc, replay in zip(pokemons, sets2, qcs, replays)]
             else:
-                pairs = [(mon, set, "NA", qc, replay) for mon, set, qc, replay in zip(pokemons, sets2, qcs, replays)]
-
-            for mon, set, suggester, qc, replay in pairs:
+                pairs = [(mon, set_text, "NA", qc, replay) for mon, set_text, qc, replay in zip(pokemons, sets2, qcs, replays)]
+        
+            for mon, set_text, suggester, qc, replay in pairs:
                 insert_set = lappland.table("spotlight_set").insert({
                     "user_message_id": payload.message_id,
-                    "format": format,
+                    "format": format_name.strip(),
                     "pokemon": mon,
-                    "set": set,
+                    "set": set_text,
                     "qc_notes": qc,
                     "replay": replay,
                     "suggested_by": suggester,
                     "spotlight_month": month
                 })
-                await asyncio.to_thread(insert_set.execute)
-        except Exception as e:
-            await log("fucked_up", error=str(e))
-            print("fucked up:",e)
+                insert_set.execute()
             
     async def on_raw_message_delete(self, payload: discord.RawMessageUpdateEvent):
 
